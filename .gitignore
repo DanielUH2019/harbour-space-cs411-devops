@@ -24,6 +24,15 @@ profile.cov
 go.work
 go.work.sum
 
+# Local build artifacts
+build/
+
+# Challenge 1 generated binaries
+/main
+/main-linux-*
+/challenge_1/main
+/challenge_1/main-linux-*
+
 # env file
 .env
 
