@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         IMAGE = 'ttl.sh/danieluh2019:2h'
+        CONTAINER = 'myapp'
     }
 
     stages {
@@ -21,6 +22,15 @@ pipeline {
         stage('Docker Push') {
             steps {
                 sh 'docker push ${IMAGE}'
+            }
+        }
+
+        stage('Deploy') {
+            agent { label 'docker' }
+            steps {
+                sh 'docker pull ${IMAGE}'
+                sh 'docker rm -f ${CONTAINER} || true'
+                sh 'docker run -d --name ${CONTAINER} -p 4444:4444 ${IMAGE}'
             }
         }
     }
