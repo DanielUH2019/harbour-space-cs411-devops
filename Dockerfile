@@ -12,6 +12,6 @@ COPY --from=builder /app/main /main
 
 EXPOSE 4444
 
-HEALTHCHECK --interval=10s --timeout=2s CMD wget -qO- http://localhost:4444/ || exit 1
+HEALTHCHECK --interval=5s --timeout=2s --start-period=5s --retries=3 CMD wget -qO- http://localhost:4444/ || exit 1
 
 CMD ["/main"]
