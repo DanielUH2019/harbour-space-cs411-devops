@@ -10,11 +10,10 @@ import (
 type Simple struct {
     Name        string
     Description string
-    Url         string
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-    simple := Simple{"Hello", "World", r.Host}
+    simple := Simple{"Hello", "World"}
 
     jsonOutput, _ := json.Marshal(simple)
 
