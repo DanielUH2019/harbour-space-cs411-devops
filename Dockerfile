@@ -1,11 +1,15 @@
-FROM golang:1.24
+FROM golang:1.24 AS builder
 
 WORKDIR /app
 
 COPY main.go ./
 
-RUN go build -o server main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
+
+FROM gcr.io/distroless/static-debian12
+
+COPY --from=builder /app/main /main
 
 EXPOSE 4444
 
-CMD ["./server"]
+CMD ["/main"]
