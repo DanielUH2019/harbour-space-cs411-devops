@@ -26,7 +26,6 @@ pipeline {
         }
 
         stage('Deploy') {
-            agent { label 'docker' }
             steps {
                 sh 'docker pull ${IMAGE}'
                 sh 'docker rm -f ${CONTAINER} || true'
