@@ -27,10 +27,30 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh 'docker pull ${IMAGE}'
                 sh 'docker rm -f ${CONTAINER} || true'
-                sh 'docker run -d --name ${CONTAINER} -p 4444:4444 ${IMAGE}'
+                sh 'docker run -d --name ${CONTAINER} --restart unless-stopped -p 4444:4444 ${IMAGE}'
+                sh '''
+                    echo "Waiting for container to become healthy..."
+                    for i in $(seq 1 15); do
+                        STATUS=$(docker inspect --format="{{.State.Health.Status}}" ${CONTAINER} 2>/dev/null)
+                        echo "  attempt $i: $STATUS"
+                        if [ "$STATUS" = "healthy" ]; then
+                            echo "Container is healthy"
+                            exit 0
+                        fi
+                        sleep 2
+                    done
+                    echo "Container failed to become healthy within 30s"
+                    docker logs ${CONTAINER}
+                    exit 1
+                '''
             }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker image prune -f || true'
         }
     }
 }
