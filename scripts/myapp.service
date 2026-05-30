@@ -1,0 +1,41 @@
+# systemd service unit TEMPLATE for the MyApp Go HTTP service.
+#
+# This file is NOT used as-is. `scripts/deploy.sh` renders it on the Jenkins
+# agent by replacing the @@PLACEHOLDERS@@ below, then ships the rendered copy
+# to the target host where `scripts/remote-install.sh` installs it as
+#   /etc/systemd/system/<SERVICE_NAME>.service
+#
+# Placeholders:
+#   @@SERVICE_USER@@    -> unprivileged system user the process runs as
+#   @@REMOTE_APP_DIR@@  -> directory the binary is installed into on the target
+#
+# The [Service] block is intentionally hardened: the process runs as a
+# non-root system user with several systemd sandboxing options enabled.
+
+[Unit]
+Description=MyApp Go HTTP service
+# Start only once the network is actually up (not merely configured).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@SERVICE_USER@@
+WorkingDirectory=@@REMOTE_APP_DIR@@
+ExecStart=@@REMOTE_APP_DIR@@/main
+# Crash recovery: restart the process if it exits non-zero.
+Restart=on-failure
+RestartSec=2
+# --- Sandboxing / least privilege ---
+# Disallow gaining new privileges (e.g. via setuid binaries).
+NoNewPrivileges=true
+# Give the service a private /tmp that is discarded on stop.
+PrivateTmp=true
+# Make /home, /root and /run/user inaccessible.
+ProtectHome=true
+# Mount /usr and the boot/efi config read-only; /etc stays writable.
+# (Tighten to `strict` + explicit ReadWritePaths= for stronger isolation.)
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
