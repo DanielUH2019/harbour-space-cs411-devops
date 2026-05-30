@@ -22,6 +22,7 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh 'docker rm -f ${CONTAINER} || true'
+                sh 'docker pull ${IMAGE}'
                 sh 'docker run -d --name ${CONTAINER} --restart unless-stopped -p 4444:4444 ${IMAGE}'
                 sh '''
                     echo "Waiting for container to become healthy..."
