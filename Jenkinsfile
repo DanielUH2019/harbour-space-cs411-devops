@@ -181,7 +181,7 @@ pipeline {
         always {
             // Wipe the workspace so secrets/known_hosts/artifacts do not linger
             // on the agent between builds.
-            cleanWs()
+            deleteDir()
         }
     }
 }

@@ -8,6 +8,9 @@ be read, linted with `shellcheck`, and run by hand when debugging.
 
 | File | Runs on | Purpose |
 |------|---------|---------|
+| `create-jenkins-deploy-key.sh` | Operator machine | Generate the SSH key pair Jenkins will use for deploys. |
+| `bootstrap-target-ssh.sh` | Operator machine + target host | Install Jenkins' public key on the target and grant the SSH user passwordless sudo. |
+| `verify-target-ssh.sh` | Operator machine | Verify SSH, passwordless sudo, and systemd access before running Jenkins. |
 | `deploy.sh` | Jenkins agent | Render the unit, copy binary + unit to the target over SSH, invoke `remote-install.sh` there. |
 | `remote-install.sh` | Target host | Privileged install: create the service user, atomically swap the binary, install the systemd unit, restart the service. |
 | `myapp.service` | — | systemd unit **template** with `@@PLACEHOLDERS@@`; rendered by `deploy.sh`. |
@@ -38,6 +41,64 @@ All inputs arrive as **environment variables** exported by the pipeline
 `SSH_OPTIONS`, plus `SSH_KEY`/`SSH_USER` from Jenkins credentials and
 `TARGET_HOST` from the build parameter). Each script documents the exact set it
 needs in its header comment and fails fast (`${VAR:?}`) if one is missing.
+
+## SSH setup for Jenkins
+
+Generate a deploy key pair:
+
+```bash
+bash scripts/create-jenkins-deploy-key.sh
+```
+
+Install the public key on the target host and grant the SSH user passwordless
+sudo. `ADMIN_USER` is only needed when the final Jenkins SSH user does not
+already exist or cannot bootstrap itself:
+
+```bash
+PUBLIC_KEY_FILE="$HOME/.ssh/jenkins-deploy-key.pub" \
+TARGET_HOST=1.2.3.4 \
+TARGET_USER=deploy \
+ADMIN_USER=ubuntu \
+bash scripts/bootstrap-target-ssh.sh
+```
+
+Verify the access Jenkins will need:
+
+```bash
+TARGET_HOST=1.2.3.4 \
+TARGET_USER=deploy \
+PRIVATE_KEY_FILE="$HOME/.ssh/jenkins-deploy-key" \
+bash scripts/verify-target-ssh.sh
+```
+
+Then add the private key to Jenkins:
+
+```text
+Manage Jenkins -> Credentials -> System -> Global credentials -> Add Credentials
+Kind: SSH Username with private key
+ID: target-ssh-key
+Username: deploy
+Private Key: paste the contents of $HOME/.ssh/jenkins-deploy-key
+```
+
+Run the Jenkins job with:
+
+```text
+TARGET_HOST=1.2.3.4
+SSH_CREDENTIALS_ID=target-ssh-key
+```
+
+If you are doing the public-key install manually inside the iximiuz target
+console, fix the pre-baked `authorized_keys` permissions before appending:
+
+```bash
+chmod 600 ~/.ssh/authorized_keys
+cat /path/to/jenkins-deploy-key.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+The `bootstrap-target-ssh.sh` helper does not append directly; it installs the
+final `authorized_keys` file with mode `0600`.
 
 ## Running a script by hand
 
