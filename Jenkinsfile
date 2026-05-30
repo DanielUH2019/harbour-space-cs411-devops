@@ -13,15 +13,9 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build and Push') {
             steps {
-                sh 'docker build -t ${IMAGE} .'
-            }
-        }
-
-        stage('Docker Push') {
-            steps {
-                sh 'docker push ${IMAGE}'
+                sh 'docker buildx build --platform linux/amd64 -t ${IMAGE} --push .'
             }
         }
 
