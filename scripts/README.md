@@ -8,9 +8,7 @@ be read, linted with `shellcheck`, and run by hand when debugging.
 
 | File | Runs on | Purpose |
 |------|---------|---------|
-| `create-jenkins-deploy-key.sh` | Operator machine | Generate the SSH key pair Jenkins will use for deploys. |
-| `bootstrap-target-ssh.sh` | Operator machine + target host | Install Jenkins' public key on the target and grant the SSH user passwordless sudo. |
-| `verify-target-ssh.sh` | Operator machine | Verify SSH, passwordless sudo, and systemd access before running Jenkins. |
+| `setup-target-local-jenkins-ssh.sh` | Target host | One-command target-local setup when you already have a shell on the target. |
 | `deploy.sh` | Jenkins agent | Render the unit, copy binary + unit to the target over SSH, invoke `remote-install.sh` there. |
 | `remote-install.sh` | Target host | Privileged install: create the service user, atomically swap the binary, install the systemd unit, restart the service. |
 | `myapp.service` | — | systemd unit **template** with `@@PLACEHOLDERS@@`; rendered by `deploy.sh`. |
@@ -44,32 +42,19 @@ needs in its header comment and fails fast (`${VAR:?}`) if one is missing.
 
 ## SSH setup for Jenkins
 
-Generate a deploy key pair:
+If you already have a shell on the target host, use the target-local helper:
 
 ```bash
-bash scripts/create-jenkins-deploy-key.sh
+TARGET_USER=laborant \
+TARGET_HOST=172.16.0.3 \
+bash scripts/setup-target-local-jenkins-ssh.sh
 ```
 
-Install the public key on the target host and grant the SSH user passwordless
-sudo. `ADMIN_USER` is only needed when the final Jenkins SSH user does not
-already exist or cannot bootstrap itself:
-
-```bash
-PUBLIC_KEY_FILE="$HOME/.ssh/jenkins-deploy-key.pub" \
-TARGET_HOST=1.2.3.4 \
-TARGET_USER=deploy \
-ADMIN_USER=ubuntu \
-bash scripts/bootstrap-target-ssh.sh
-```
-
-Verify the access Jenkins will need:
-
-```bash
-TARGET_HOST=1.2.3.4 \
-TARGET_USER=deploy \
-PRIVATE_KEY_FILE="$HOME/.ssh/jenkins-deploy-key" \
-bash scripts/verify-target-ssh.sh
-```
+It creates or reuses `$HOME/.ssh/jenkins-deploy-key`, installs the matching
+public key into the target user's `authorized_keys`, fixes the iximiuz
+`authorized_keys` mode issue by installing the file as `0600`, grants
+passwordless sudo, verifies SSH login when `TARGET_HOST` is set, and prints the
+private key block to paste into Jenkins.
 
 Then add the private key to Jenkins:
 
@@ -77,28 +62,16 @@ Then add the private key to Jenkins:
 Manage Jenkins -> Credentials -> System -> Global credentials -> Add Credentials
 Kind: SSH Username with private key
 ID: target-ssh-key
-Username: deploy
+Username: laborant
 Private Key: paste the contents of $HOME/.ssh/jenkins-deploy-key
 ```
 
 Run the Jenkins job with:
 
 ```text
-TARGET_HOST=1.2.3.4
+TARGET_HOST=172.16.0.3
 SSH_CREDENTIALS_ID=target-ssh-key
 ```
-
-If you are doing the public-key install manually inside the iximiuz target
-console, fix the pre-baked `authorized_keys` permissions before appending:
-
-```bash
-chmod 600 ~/.ssh/authorized_keys
-cat /path/to/jenkins-deploy-key.pub >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-```
-
-The `bootstrap-target-ssh.sh` helper does not append directly; it installs the
-final `authorized_keys` file with mode `0600`.
 
 ## Running a script by hand
 
