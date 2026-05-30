@@ -62,6 +62,19 @@ touch .ssh/known_hosts
 chmod 700 .ssh
 chmod 600 .ssh/known_hosts
 
+# Pre-trust the target host key non-interactively. This writes to the same
+# workspace-local known_hosts file referenced by SSH_OPTIONS.
+echo "Pre-trusting SSH host key for $TARGET_HOST ..."
+if ! known_hosts_entry="$(ssh-keyscan -T 10 -H "$TARGET_HOST" 2>/dev/null)"; then
+    echo "Could not fetch SSH host key for $TARGET_HOST" >&2
+    exit 1
+fi
+if [ -z "$known_hosts_entry" ]; then
+    echo "ssh-keyscan returned no host keys for $TARGET_HOST" >&2
+    exit 1
+fi
+printf '%s\n' "$known_hosts_entry" >> .ssh/known_hosts
+
 # --- 3. Create temp files on the target ------------------------------------
 # We upload to neutral /tmp paths first, then install atomically on the target.
 # NOTE on `# shellcheck disable=SC2086`: $SSH_OPTIONS is a list of flags that

@@ -118,3 +118,8 @@ bash scripts/deploy.sh
 
 The SSH user needs **passwordless sudo** for the `install`, `useradd`, `mv` and
 `systemctl` commands in `remote-install.sh`, and the host must use `systemd`.
+
+## Requirements on the Jenkins agent
+
+The agent that runs the pipeline needs `ssh`, `scp`, `ssh-keyscan`, `curl`, and
+the configured Go toolchain available on `PATH`.
