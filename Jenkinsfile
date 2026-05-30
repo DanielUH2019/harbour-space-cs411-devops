@@ -32,7 +32,7 @@ pipeline {
     // PREREQUISITE: configure a Go installation named exactly 'go-1.24' under
     //   Manage Jenkins -> Tools -> Go installations (requires the "Go" plugin).
     tools {
-        go 'go-1.24'
+        go 'go-1.22'
     }
 
     // Build-time parameters. Jenkins shows these as a form on "Build with
