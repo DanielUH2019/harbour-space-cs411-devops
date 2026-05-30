@@ -19,7 +19,6 @@ pipeline {
     agent any
 
     options {
-        timestamps()                                   // prefix log lines with a timestamp
         disableConcurrentBuilds()                      // never deploy two builds at once
         timeout(time: 10, unit: 'MINUTES')             // abort if something hangs
         buildDiscarder(logRotator(numToKeepStr: '20')) // keep only the last 20 builds
@@ -32,7 +31,7 @@ pipeline {
     // PREREQUISITE: configure a Go installation named exactly 'go-1.24' under
     //   Manage Jenkins -> Tools -> Go installations (requires the "Go" plugin).
     tools {
-        go 'go-1.22'
+        go 'go-1.24.1'
     }
 
     // Build-time parameters. Jenkins shows these as a form on "Build with
