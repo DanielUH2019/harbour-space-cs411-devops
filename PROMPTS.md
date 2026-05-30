@@ -47,3 +47,23 @@ startup   = “give me time before judging me”
 ```
 
 Kubernetes models those separately. Docker HEALTHCHECK, Compose, Swarm, and ECS are closer to a single “is this container healthy?” signal, with different consequences depending on the orchestrator.
+
+---
+
+## 3. "Should the base images be pinned by digest instead of a tag?"
+
+**Why asked**: The Dockerfile used `FROM golang:1.24` and `FROM alpine:3.21`. Tags are mutable — the registry can repoint them to a new image at any time — so the same Dockerfile can build a different image tomorrow than it does today.
+
+**What we changed**: Pinned both stages by digest:
+
+```dockerfile
+FROM golang:1.24@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 AS builder
+...
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+```
+
+The tag is kept alongside the digest purely for human readability; the digest is what Docker actually resolves. These are multi-arch *index* digests, so builds on different architectures still resolve correctly.
+
+**One failure mode it prevents**: A maintainer re-pushes `alpine:3.21` with an updated package set (or a compromised mirror serves a malicious image under that tag). With a bare tag, the next build silently pulls the new bytes — a green pipeline can ship a different, possibly broken or backdoored, runtime than the one that was tested. With the digest, any change to the underlying image makes the pull fail loudly instead of substituting content behind your back.
+
+**One inconvenience it introduces**: Patch updates are no longer free. When `alpine:3.21` gets a CVE fix, the digest-pinned Dockerfile keeps building the old, vulnerable image until someone manually re-resolves the digest and commits it. You trade automatic drift for a manual bump step — best handled by an automated tool like Dependabot or Renovate so the update becomes a reviewable PR rather than an invisible change.
