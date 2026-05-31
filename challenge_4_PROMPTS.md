@@ -16,6 +16,66 @@ is what actually forces the freshly pushed image to be pulled.
 
 ---
 
+## Debugging — the `401` that wasn't expiration or RBAC
+
+The first pipeline run died on the very first `kubectl` call:
+
+```text
++ kubectl delete pod myapp --ignore-not-found --wait
+... couldn't get current server API group list: the server has asked for the
+    client to provide credentials
+error: You must be logged in to the server (the server has asked for the client
+    to provide credentials)
+```
+
+**Reading the error precisely was the whole game.** "The server has asked for the
+client to provide credentials" is an HTTP **401**, and a 401 means the request
+*reached* the API server and TLS was fine — the server simply saw no valid bearer
+token and treated the caller as `system:anonymous`. That immediately rules out a
+class of red herrings: it is *not* a DNS/network problem (that fails to connect,
+not 401), *not* a TLS/CA problem (that fails the handshake), and *not* RBAC (that
+would be a **403** "forbidden", token-accepted-but-not-allowed). The fault had to
+be the token itself or how it was delivered.
+
+The agent's first instinct was **token expiry** — `kubectl create token` defaults
+to a ~1h TTL, a classic CI gotcha — and it proposed a long-lived
+`kubernetes.io/service-account-token` Secret. **I pushed back: it wasn't
+expiration.** That correction mattered, because it stopped us from "fixing" the
+wrong thing and shipping a non-expiring token we didn't need.
+
+So we isolated the two sides with **one decisive test** — mint a fresh token and
+hit the API directly, outside Jenkins entirely:
+
+```bash
+TOKEN=$(kubectl create token jenkins-robot)
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  https://kubernetes:6443/api/v1/namespaces/default/pods -o /dev/null -w "%{http_code}\n"
+# -> 200
+```
+
+A **200** split the problem cleanly: the ServiceAccount, the `cluster-admin`
+rolebinding, and the API server are all correct in isolation. Combined with the
+Jenkins credential being the right *kind* (Secret text — the only kind the
+Kubernetes CLI plugin injects as a `--token`), the only remaining variable was the
+**byte value stored in the credential**. The culprit: a **trailing newline pasted
+into the Secret text field**. Copying the output of `kubectl create token` from a
+terminal drags along a `\n`, so the plugin built `Authorization: Bearer <token>\n`
+— a malformed header the server can't parse, so it falls back to anonymous → 401.
+
+**Fix:** re-paste the token with no trailing whitespace. Build went green.
+
+One hardening that *did* survive: a `kubectl auth can-i create pods -n default`
+guard at the top of the deploy block. If the credential ever breaks again it fails
+on that line with a readable message, instead of the wall of `memcache` 401 noise
+that every subsequent command would otherwise spew.
+
+**Lesson:** the HTTP status code is a triage tree, not a detail — 401 vs 403 vs a
+connection error each points at a different layer, and naming the layer first kept
+us from chasing expiry and CA certs. And when an auth value "looks right," suspect
+the invisible bytes (newline, leading space) before suspecting the logic.
+
+---
+
 ## Stretch 1 — Liveness + readiness probes
 
 Both probes are `httpGet` on path `/` port `4444`, the same endpoint the app

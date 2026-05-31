@@ -30,6 +30,9 @@ pipeline {
                 // KUBE_SERVER and authenticated with the jenkins-robot bearer token.
                 // With no caCertificate supplied it sets insecure-skip-tls-verify.
                 withKubeConfig(serverUrl: env.KUBE_SERVER, credentialsId: env.KUBE_CRED) {
+                    // Fail fast with a clear message if the token is missing/expired,
+                    // instead of a wall of memcache 401 noise from every later command.
+                    sh 'kubectl auth can-i create pods -n default'
                     // The :2h tag is reused every build, so apply alone would be a
                     // no-op against an unchanged spec and never pull the new image.
                     // Recreate the Pod so imagePullPolicy: Always fetches the push.
