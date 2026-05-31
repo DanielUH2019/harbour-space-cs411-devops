@@ -3,7 +3,12 @@ pipeline {
 
     environment {
         IMAGE = 'ttl.sh/danieluh2019:2h'
-        CONTAINER = 'myapp'
+        POD = 'myapp'
+        // API server reachable from the Jenkins job, and the bearer token for
+        // ServiceAccount default:jenkins-robot stored as a "Secret text"
+        // credential in the Jenkins credential store.
+        KUBE_SERVER = 'https://kubernetes:6443'
+        KUBE_CRED = 'jenkins-robot-token'
     }
 
     stages {
@@ -19,33 +24,23 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to Kubernetes') {
             steps {
-                sh 'docker rm -f ${CONTAINER} || true'
-                sh 'docker pull ${IMAGE}'
-                sh 'docker run -d --name ${CONTAINER} --restart unless-stopped -p 4444:4444 ${IMAGE}'
-                sh '''
-                    echo "Waiting for container to become healthy..."
-                    for i in $(seq 1 15); do
-                        STATUS=$(docker inspect --format="{{.State.Health.Status}}" ${CONTAINER} 2>/dev/null)
-                        echo "  attempt $i: $STATUS"
-                        if [ "$STATUS" = "healthy" ]; then
-                            echo "Container is healthy"
-                            exit 0
-                        fi
-                        sleep 2
-                    done
-                    echo "Container failed to become healthy within 30s"
-                    docker logs ${CONTAINER}
-                    exit 1
-                '''
+                // The Kubernetes CLI plugin writes a temporary kubeconfig wired to
+                // KUBE_SERVER and authenticated with the jenkins-robot bearer token.
+                // With no caCertificate supplied it sets insecure-skip-tls-verify.
+                withKubeConfig(serverUrl: env.KUBE_SERVER, credentialsId: env.KUBE_CRED) {
+                    // The :2h tag is reused every build, so apply alone would be a
+                    // no-op against an unchanged spec and never pull the new image.
+                    // Recreate the Pod so imagePullPolicy: Always fetches the push.
+                    sh 'kubectl delete pod ${POD} --ignore-not-found --wait'
+                    sh 'kubectl apply -f pod.yaml'
+                    sh 'kubectl apply -f service.yaml'
+                    sh 'kubectl wait --for=condition=Ready pod/${POD} --timeout=90s'
+                    sh 'kubectl get pod ${POD} -o wide'
+                    sh 'kubectl get service ${POD} -o wide'
+                }
             }
-        }
-    }
-
-    post {
-        always {
-            sh 'docker image prune -f || true'
         }
     }
 }
