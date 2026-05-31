@@ -141,15 +141,17 @@ and `BestEffort` Pods are **first to be killed**. So "no resources set" doesn't 
 "unlimited and safe" — it means "unbounded blast radius *and* first in line to die."
 
 **What goes wrong if you set *only limits* (no requests):** Kubernetes defaults the
-requests to equal the limits, which is *not* what most people expect when they "just
-add a limit." That silently changes scheduling and QoS: the scheduler now reserves
-the full limit amount on a node (so you fit fewer Pods than you intended, and can
-get unschedulable Pods even though real usage is tiny), and the Pod is promoted to
-`Guaranteed` QoS by accident. The harm is the inverse of stretch's first case —
-instead of over-packing, you *under-pack* the cluster and waste capacity, all from a
-default you didn't write down. Requests (what you're guaranteed / scheduled on) and
-limits (the hard cap) answer two different questions; omitting requests lets the
-limit answer both, usually wrong.
+request for each limited resource to that same limit, which is *not* what most
+people expect when they "just add a limit." That silently changes scheduling: the
+scheduler now reserves the full limit amount on a node (so you fit fewer Pods than
+you intended, and can get unschedulable Pods even though real usage is tiny). If
+you set matching limits for every CPU and memory field, the Pod can also be
+promoted to `Guaranteed` QoS by accident; if you only limit memory, it is usually
+`Burstable`, but the scheduling problem still applies. The harm is the inverse of
+stretch's first case — instead of over-packing, you *under-pack* the cluster and
+waste capacity, all from a default you didn't write down. Requests (what you're
+guaranteed / scheduled on) and limits (the hard cap) answer two different
+questions; omitting requests lets the limit answer both, usually wrong.
 
 ---
 
@@ -170,11 +172,13 @@ spec:
 ```
 
 **Why a Pod IP is a bad target for clients:** a Pod IP is ephemeral and tied to that
-exact Pod instance. The moment the Pod is recreated — a node reboot, an eviction, a
-liveness-triggered restart that reschedules it, or our own `kubectl delete && apply`
-on the next pipeline run — it comes back with a **different IP**, and every client
-holding the old address is now talking to nothing. There is also no load balancing:
-a Pod IP points at one replica, so you can't scale out behind it.
+exact Pod instance. The moment the Pod is recreated or rescheduled — a node reboot,
+an eviction, a failed node, or our own `kubectl delete && apply` on the next
+pipeline run — it comes back with a **different IP**, and every client holding the
+old address is now talking to nothing. A normal liveness-probe restart only
+restarts the container inside the same Pod, so it usually keeps the same Pod IP;
+the IP changes when the Pod itself is replaced. There is also no load balancing: a
+Pod IP points at one replica, so you can't scale out behind it.
 
 **What the Service buys you:** a *stable* virtual IP and DNS name (`myapp` /
 `myapp.default.svc.cluster.local`) that never changes for the life of the Service.
