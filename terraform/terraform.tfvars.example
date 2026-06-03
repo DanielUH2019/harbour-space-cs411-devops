@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+
+# Region with free-tier capacity. Change if you prefer to be closer.
+aws_region = "us-east-1"
+
+# Path to the PUBLIC key you generated for the deploy key pair.
+# e.g.  ssh-keygen -t ed25519 -f ~/.ssh/myapp-deploy
+public_key_path = "~/.ssh/myapp-deploy.pub"
+
+# Billing safety net: get emailed if spend approaches $1/month.
+# Leave empty to skip creating the budget.
+budget_alert_email   = "you@example.com"
+monthly_budget_limit = "1"
+
+# Stretch: lock SSH down to just your laptop + the Jenkins host.
+# ssh_ingress_cidrs = ["203.0.113.5/32", "198.51.100.10/32"]
