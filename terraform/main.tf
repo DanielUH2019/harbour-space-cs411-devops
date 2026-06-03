@@ -152,13 +152,20 @@ resource "aws_security_group" "app" {
 # --- The instance ------------------------------------------------------------
 resource "aws_instance" "app" {
   ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type # t2.micro = free-tier
+  instance_type          = var.instance_type # t3.micro = free-tier (credit plan)
   key_name               = aws_key_pair.deploy.key_name
   vpc_security_group_ids = [aws_security_group.app.id]
 
   # Default subnets auto-assign a public IP, but we make it explicit so a
   # tightened-down account still yields a reachable box.
   associate_public_ip_address = true
+
+  # t3.micro defaults to "unlimited" CPU credits, which can bill for sustained
+  # CPU bursts. Force "standard" so an idle / free-tier box never incurs
+  # surprise CPU charges. (t2 is "standard" by default; this is harmless there.)
+  credit_specification {
+    cpu_credits = "standard"
+  }
 
   root_block_device {
     volume_size = var.root_volume_size # <= 30 GiB (validated) keeps EBS free-tier

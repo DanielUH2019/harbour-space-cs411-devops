@@ -75,9 +75,16 @@ terraform destroy
 This config provisions only free-tier-shaped resources, but the responsibility
 for staying free is operational, not just declarative:
 
-- **Run exactly one instance.** Free tier is 750 hrs/month of t2.micro — a month
-  is 744 hrs, so one box 24/7 fits; a second one (e.g. a forgotten `apply`)
-  blows it. `instance_type` is validated to t2.micro/t3.micro only.
+- **Run exactly one instance.** Free tier covers 750 hrs/month of a micro box —
+  a month is 744 hrs, so one 24/7 fits; a second one (e.g. a forgotten `apply`)
+  blows it. `instance_type` is validated to t3.micro/t2.micro only, and pinned to
+  "standard" CPU credits so t3 bursts can't bill you.
+- **Instance type depends on your plan.** The credit-based Free Tier (newer
+  accounts) lists **t3.micro**; the legacy 12-month plan used **t2.micro**. The
+  default is `t3.micro`; if `RunInstances` rejects it as not free-tier-eligible,
+  flip `instance_type` to the other one. Run
+  `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true`
+  to see which your account allows.
 - **`terraform destroy` when you're done** for the day/week. Nothing here is
   "always free" in unlimited quantity.
 - **Public IPv4 is billed since Feb 2024** (~$0.005/hr). One IP on a running

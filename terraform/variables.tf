@@ -10,16 +10,17 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. t2.micro stays within the free tier."
+  description = "EC2 instance type. t3.micro is free-tier on the credit-based plan."
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 
   # Guardrail: refuse anything that isn't a free-tier micro type, so a typo
-  # can't silently provision a billed instance. t2.micro is free-tier in
-  # regions that offer it; t3.micro is the free-tier type where t2 is absent.
+  # can't silently provision a billed instance. The newer credit-based Free
+  # Tier lists t3.micro (x86_64); the legacy 12-month plan used t2.micro. Both
+  # are x86_64 — do NOT switch to t4g.micro (ARM), the AMI/binary are amd64.
   validation {
-    condition     = contains(["t2.micro", "t3.micro"], var.instance_type)
-    error_message = "Only t2.micro/t3.micro are free-tier eligible. Change this deliberately if you mean to be billed."
+    condition     = contains(["t3.micro", "t2.micro"], var.instance_type)
+    error_message = "Only t3.micro/t2.micro are free-tier eligible (and x86_64). Change this deliberately if you mean to be billed."
   }
 }
 
