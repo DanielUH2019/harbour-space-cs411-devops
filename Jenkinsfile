@@ -6,11 +6,21 @@
 // (agent, options, stages) is fixed and self-documenting.
 //
 // High-level flow:
-//   Validate Inputs -> Checkout -> Lint -> Build -> Deploy -> Health Check
+//   Validate Inputs -> Checkout -> Provision (Terraform) -> Lint -> Build
+//     -> Deploy -> Health Check
+//
+// The Provision stage runs Terraform (terraform/) to create the AWS EC2 target
+// and feeds its public IP to the Deploy stage as TARGET_HOST. State lives in S3
+// (terraform/main.tf backend), so it survives this pipeline's workspace wipe and
+// a re-run will NOT create a second instance.
 //
 // The pipeline only ORCHESTRATES. The actual deploy/health-check logic lives in
 // versioned, shellcheck-able scripts under scripts/ so it can be read, linted,
 // and even run by hand outside Jenkins. See scripts/README.md for the details.
+//
+// AGENT PREREQUISITES: `terraform` (>= 1.10), `aws` CLI and `ssh-keygen` on PATH,
+// plus `ssh`/`scp`/`curl` (already needed by the deploy). The Go toolchain comes
+// from `tools`. The `aws` CLI is used once to create the S3 state bucket.
 // =============================================================================
 pipeline {
     // `agent any` lets Jenkins run this on any available executor. The build
@@ -38,14 +48,18 @@ pipeline {
     // Parameters", and they are also settable via the API / multibranch config.
     parameters {
         string(
-            name: 'TARGET_HOST',
-            defaultValue: '',
-            description: 'Target machine DNS name or IP address'
-        )
-        string(
             name: 'SSH_CREDENTIALS_ID',
             defaultValue: 'target-ssh-key',
-            description: 'Jenkins "SSH Username with private key" credential ID'
+            description: 'Jenkins "SSH Username with private key" credential ID. ' +
+                'Username MUST be "ubuntu" (the Ubuntu AMI default login). The ' +
+                'instance is provisioned to trust the PUBLIC half of this key.'
+        )
+        string(
+            name: 'AWS_CREDENTIALS_ID',
+            defaultValue: 'aws-deploy-keys',
+            description: 'Jenkins "Username with password" credential holding the ' +
+                'AWS access key ID (username) and secret access key (password), ' +
+                'used by Terraform to provision the EC2 target.'
         )
     }
 
@@ -57,6 +71,17 @@ pipeline {
         REMOTE_APP_DIR = '/opt/myapp'        // install dir on the target
         SERVICE_NAME = 'myapp'               // systemd service name
         SERVICE_USER = 'myapp'               // unprivileged user the service runs as
+        TF_DIR = 'terraform'                 // directory holding the Terraform config
+        TF_IN_AUTOMATION = 'true'            // quieter Terraform output in CI
+        // S3 state backend. MUST match the backend "s3" block in terraform/main.tf.
+        // The Provision stage creates this bucket if it does not exist yet, so the
+        // whole flow is driven from Jenkins with no manual bootstrap.
+        TF_STATE_BUCKET = 'danielc-cs411-tfstate'
+        TF_STATE_REGION = 'us-east-1'
+        // Passed to Terraform as TF_VAR_budget_alert_email so the billing-budget
+        // resource is created when provisioning from the pipeline (the laptop
+        // reads it from terraform.tfvars, which is gitignored / not in the checkout).
+        BUDGET_ALERT_EMAIL = 'daniel.cardenas@student.harbour.space'
         // Common SSH/SCP flags. BatchMode prevents interactive prompts (so the
         // build fails fast instead of hanging); accept-new trusts a host's key on
         // first contact and pins it in a workspace-local known_hosts file.
@@ -70,16 +95,16 @@ pipeline {
         stage('Validate Inputs') {
             steps {
                 script {
-                    // Normalise the parameters and surface them as env vars so the
-                    // downstream scripts (which read $TARGET_HOST) see clean values.
-                    env.TARGET_HOST = params.TARGET_HOST.trim()
+                    // Normalise the credential parameters. TARGET_HOST is no longer
+                    // an input — the Provision stage derives it from Terraform.
                     env.SSH_CREDENTIALS_ID = params.SSH_CREDENTIALS_ID.trim()
+                    env.AWS_CREDENTIALS_ID = params.AWS_CREDENTIALS_ID.trim()
 
-                    if (!env.TARGET_HOST) {
-                        error('TARGET_HOST must be set')
-                    }
                     if (!env.SSH_CREDENTIALS_ID) {
                         error('SSH_CREDENTIALS_ID must be set')
+                    }
+                    if (!env.AWS_CREDENTIALS_ID) {
+                        error('AWS_CREDENTIALS_ID must be set')
                     }
                 }
             }
@@ -90,6 +115,93 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        // --- Provision the EC2 target with Terraform -------------------------
+        // Runs FIRST (before lint/build) so the instance is booting while those
+        // run, leaving it ready for SSH by the time Deploy starts. Sets
+        // env.TARGET_HOST from the Terraform output for the downstream scripts.
+        stage('Provision') {
+            steps {
+                withCredentials([
+                    // AWS keys for Terraform (and the S3 state backend).
+                    usernamePassword(
+                        credentialsId: env.AWS_CREDENTIALS_ID,
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ),
+                    // The deploy key: we derive its PUBLIC half so the instance
+                    // authorizes exactly the key Jenkins later logs in with.
+                    sshUserPrivateKey(
+                        credentialsId: env.SSH_CREDENTIALS_ID,
+                        keyFileVariable: 'SSH_KEY',
+                        usernameVariable: 'SSH_USER'
+                    )
+                ]) {
+                    dir(env.TF_DIR) {
+                        sh '''#!/usr/bin/env bash
+                            set -euo pipefail
+
+                            # Ensure the S3 state bucket exists (one-time, idempotent)
+                            # so the whole flow is self-contained in Jenkins. Terraform
+                            # cannot create its own backend bucket, so we do it here
+                            # with the AWS CLI before `terraform init`.
+                            if ! aws s3api head-bucket --bucket "$TF_STATE_BUCKET" 2>/dev/null; then
+                                echo "Creating state bucket $TF_STATE_BUCKET ..."
+                                # us-east-1 must NOT pass a LocationConstraint.
+                                if [ "$TF_STATE_REGION" = "us-east-1" ]; then
+                                    aws s3api create-bucket --bucket "$TF_STATE_BUCKET" --region "$TF_STATE_REGION"
+                                else
+                                    aws s3api create-bucket --bucket "$TF_STATE_BUCKET" --region "$TF_STATE_REGION" \
+                                        --create-bucket-configuration "LocationConstraint=$TF_STATE_REGION"
+                                fi
+                                aws s3api put-bucket-versioning --bucket "$TF_STATE_BUCKET" \
+                                    --versioning-configuration Status=Enabled
+                                aws s3api put-public-access-block --bucket "$TF_STATE_BUCKET" \
+                                    --public-access-block-configuration \
+                                    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+                            fi
+
+                            # Derive the public key from the Jenkins SSH credential.
+                            # Single source of truth: the box trusts the same key
+                            # the Deploy stage authenticates with.
+                            ssh-keygen -y -f "$SSH_KEY" > deploy.pub
+                            chmod 600 deploy.pub
+
+                            export TF_VAR_public_key_path="deploy.pub"
+                            export TF_VAR_budget_alert_email="$BUDGET_ALERT_EMAIL"
+
+                            terraform init -input=false
+                            terraform apply -auto-approve -input=false
+                        '''
+                        // Capture the public IP for the deploy/health-check scripts.
+                        script {
+                            env.TARGET_HOST = sh(
+                                script: 'terraform output -raw public_ip',
+                                returnStdout: true
+                            ).trim()
+                            echo "Provisioned EC2 target at ${env.TARGET_HOST}"
+                        }
+                    }
+
+                    // A freshly booted instance may not accept SSH yet; wait for
+                    // port 22 so the Deploy stage's ssh-keyscan does not fail.
+                    sh '''#!/usr/bin/env bash
+                        set -euo pipefail
+                        echo "Waiting for sshd on ${TARGET_HOST}:22 ..."
+                        for i in $(seq 1 40); do
+                            if (exec 3<>"/dev/tcp/${TARGET_HOST}/22") 2>/dev/null; then
+                                exec 3>&-
+                                echo "sshd is accepting connections."
+                                exit 0
+                            fi
+                            sleep 5
+                        done
+                        echo "Timed out waiting for sshd on ${TARGET_HOST}" >&2
+                        exit 1
+                    '''
+                }
             }
         }
 
@@ -179,8 +291,10 @@ pipeline {
             echo "Pipeline FAILED for ${env.SERVICE_NAME} -> ${env.TARGET_HOST}. Check the stage logs above."
         }
         always {
-            // Wipe the workspace so secrets/known_hosts/artifacts do not linger
-            // on the agent between builds.
+            // Wipe the workspace so secrets/known_hosts/artifacts/deploy.pub do
+            // not linger on the agent between builds. This is SAFE because the
+            // Terraform state lives in S3, not the workspace — wiping it does not
+            // lose track of the instance (re-init pulls state back from S3).
             deleteDir()
         }
     }
